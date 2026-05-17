@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux, riscv64]
+    runs-on: ubuntu-24.04-riscv
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -21,16 +21,13 @@ jobs:
           ref: ${{ inputs.release_tag || github.ref }}
           fetch-depth: 0
 
-      - name: Set up Python
-        run: |
-          python3 -m venv /tmp/build-venv
-          . /tmp/build-venv/bin/activate
-          pip install --upgrade pip setuptools wheel
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
 
       - name: Build wheel
         run: |
-          . /tmp/build-venv/bin/activate
-          pip wheel --no-deps --wheel-dir /tmp/wheels/ . 
+          uvx --python 3.12 --with setuptools --with wheel \
+            pip wheel . --no-deps --wheel-dir /tmp/wheels/
 
       - name: Verify platform tag
         run: |
@@ -53,11 +50,11 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: rm -rf /tmp/build-venv /tmp/wheels
+        run: rm -rf /tmp/wheels
 
   release:
     needs: build
-    runs-on: [self-hosted, linux, riscv64]
+    runs-on: ubuntu-latest
     if: success()
     env:
       GH_REPO: ${{ github.repository }}
@@ -92,23 +89,28 @@ jobs:
         run: |
           TAG="riscv64-v${{ steps.wheel_info.outputs.version }}"
           TITLE="riscv64 wheel v${{ steps.wheel_info.outputs.version }}"
+          FIND_LINKS="https://github.com/$GH_REPO/releases/download/$TAG/"
           gh release delete "$TAG" --yes 2>/dev/null || true
           git tag -d "$TAG" 2>/dev/null || true
           git push origin ":refs/tags/$TAG" 2>/dev/null || true
-          gh release create "$TAG"             --title "$TITLE"             --notes "Prebuilt riscv64 wheel for $(uname -m) Linux.
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes "Prebuilt riscv64 wheel for Linux.
 
-          Built on: BananaPi F3 (SpacemiT K1, rv64imafdcv)
-          Python: $(python3 --version 2>&1)
+          Built on: RISE riscv64 runner (ubuntu-24.04-riscv)
           Wheel: ${{ steps.wheel_info.outputs.whl_name }}
 
           Install:
           \`\`\`
-          pip install tree-sitter-bash --find-links https://github.com/gounthar/$(basename $PWD)/releases/download/$TAG/
-          \`\`\`"             /tmp/wheels/*.whl             /tmp/wheels/SHA256SUMS
+          pip install tree-sitter-bash --find-links $FIND_LINKS
+          \`\`\`" \
+            /tmp/wheels/*.whl \
+            /tmp/wheels/SHA256SUMS
 
       - name: Cleanup
         if: always()
         run: rm -rf /tmp/wheels
+
   notify-index:
     needs: release
     runs-on: ubuntu-latest
